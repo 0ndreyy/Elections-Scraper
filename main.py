@@ -1,3 +1,10 @@
+"""
+main.py: třetí projekt do Engeto Online Python Akademie
+
+author: Ondřej Petrů
+email: ondra.petru@gmail.com
+"""
+
 import sys
 import requests
 from bs4 import BeautifulSoup
@@ -36,7 +43,7 @@ def parse_number(s: str) -> Union[int, float]:
     if s is None:
         return None
     s = s.strip().replace("\xa0", "").replace(" ", "")
-    if s == "":
+    if s == "" or s == "-":
         return None
     if "," in s:  # desetinné číslo (procenta)
         return float(s.replace(",", "."))
@@ -46,27 +53,28 @@ def parse_number(s: str) -> Union[int, float]:
 def extract_obec_links(soup: BeautifulSoup) -> List[Tuple[str, str, str]]:
     """Získá odkazy na obce z tabulky."""
     links = []
-    table = soup.find("table", {"class": "table"})
-    for row in table.find_all("tr")[2:]:
-        cells = row.find_all("td")
-        if not cells:
-            continue
-        code = cells[0].text.strip()
-        name = cells[1].text.strip()
-        link_tag = cells[0].find("a")
-        if link_tag:
-            link = BASE_URL + link_tag.get("href")
-            links.append((code, name, link))
+    for table in soup.find_all("table", {"class": "table"}):
+        for row in table.find_all("tr")[2:]:
+            cells = row.find_all("td")
+            if not cells:
+                continue
+            code = cells[0].text.strip()
+            name = cells[1].text.strip()
+            link_tag = cells[0].find("a")
+            if link_tag:
+                link = BASE_URL + link_tag.get("href")
+                links.append((code, name, link))
     return links
 
 
-def extract_vote_data(soup: BeautifulSoup) -> Tuple[int, int, int, dict]:
+def extract_vote_data(soup: BeautifulSoup) -> Tuple[int, int, int, dict, dict]:
     """Získá počet voličů, obálek, platných hlasů a hlasy pro každou stranu."""
-    tds = soup.select("div.t2_470 td")
+    tds = soup.select("#ps311_t1 td")
     voters = parse_number(tds[3].text)
     envelopes = parse_number(tds[4].text)
     valid = parse_number(tds[7].text)
 
+    party_numbers = {}
     party_votes = {}
     party_tables = soup.find_all("div", class_="t2_470")
     for table in party_tables:
@@ -75,10 +83,14 @@ def extract_vote_data(soup: BeautifulSoup) -> Tuple[int, int, int, dict]:
             cells = row.find_all("td")
             if len(cells) < 3:
                 continue
+            number = parse_number(cells[0].text)
             party = cells[1].text.strip()
             votes = parse_number(cells[2].text)
+            if number is None or votes is None:
+                continue
+            party_numbers[number] = party
             party_votes[party] = votes
-    return voters, envelopes, valid, party_votes
+    return voters, envelopes, valid, party_numbers, party_votes
 
 
 def write_csv(filename: str, data: List[dict], headers: List[str]) -> None:
@@ -95,11 +107,11 @@ def main():
     obce = extract_obec_links(main_soup)
 
     results = []
-    all_parties = set()
+    all_party_numbers = {}
 
     for code, name, detail_url in obce:
         detail_soup = get_soup(detail_url)
-        voters, envelopes, valid, party_votes = extract_vote_data(detail_soup)
+        voters, envelopes, valid, party_numbers, party_votes = extract_vote_data(detail_soup)
         row = {
             "kód obce": code,
             "název obce": name,
@@ -108,10 +120,10 @@ def main():
             "platné hlasy": valid,
         }
         row.update(party_votes)
-        all_parties.update(party_votes.keys())
+        all_party_numbers.update(party_numbers)
         results.append(row)
 
-    headers = ["kód obce", "název obce", "voliči v seznamu", "vydané obálky", "platné hlasy"] + sorted(all_parties)
+    headers = ["kód obce", "název obce", "voliči v seznamu", "vydané obálky", "platné hlasy"] + [v for _, v in sorted(all_party_numbers.items(), key=lambda item: item[0])]
     write_csv(output_file, results, headers)
     print(f"{DECORATIVE_LINE}\nHotovo! Výsledky uloženy do {output_file}\n{DECORATIVE_LINE}")
 
